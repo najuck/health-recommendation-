@@ -1,138 +1,269 @@
-from flask import Flask,request,render_template
+import os
+import ast
 import numpy as np
 import pandas as pd
 import pickle
+from flask import Flask, request, render_template, redirect, url_for, jsonify
 
+# Setup base directory for robust path resolution
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Load datasets safely
+precautions = pd.read_csv(os.path.join(BASE_DIR, "precautions_df.csv"))
+workout = pd.read_csv(os.path.join(BASE_DIR, "workout_df.csv"))
+description = pd.read_csv(os.path.join(BASE_DIR, "description.csv"))
+medications = pd.read_csv(os.path.join(BASE_DIR, "medications.csv"))
+diets = pd.read_csv(os.path.join(BASE_DIR, "diets.csv"))
 
-#load database=====================
-precautions = pd.read_csv("precautions_df.csv")
-workout = pd.read_csv("workout_df.csv")
-description = pd.read_csv("description.csv")
-medications = pd.read_csv("medications.csv")
-diets = pd.read_csv("diets.csv")
-#load  trained model=======================
-svc = pickle.load(open("models/svc.pkl",'rb'))
+# Strip whitespace from disease column in all datasets for 100% reliable matching
+precautions['Disease'] = precautions['Disease'].astype(str).str.strip()
+workout['disease'] = workout['disease'].astype(str).str.strip()
+description['Disease'] = description['Disease'].astype(str).str.strip()
+medications['Disease'] = medications['Disease'].astype(str).str.strip()
+diets['Disease'] = diets['Disease'].astype(str).str.strip()
 
-app = Flask(__name__)
+# Load trained model
+model_path = os.path.join(BASE_DIR, "models", "svc.pkl")
+svc = pickle.load(open(model_path, 'rb'))
 
-# model prediction function
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, "templates"),
+    static_folder=os.path.join(BASE_DIR, "static")
+)
 
+# Model feature names (132 exact features trained in SVC)
+feature_names = list(svc.feature_names_in_)
 
-####################### custom and helper function#######################
+# Mapping of diseases (all leading/trailing whitespaces removed)
+diseases_list = {
+    15: 'Fungal infection', 4: 'Allergy', 16: 'GERD', 9: 'Chronic cholestasis', 14: 'Drug Reaction',
+    33: 'Peptic ulcer disease', 1: 'AIDS', 12: 'Diabetes', 17: 'Gastroenteritis', 6: 'Bronchial Asthma',
+    23: 'Hypertension', 30: 'Migraine', 7: 'Cervical spondylosis', 32: 'Paralysis (brain hemorrhage)',
+    28: 'Jaundice', 29: 'Malaria', 8: 'Chicken pox', 11: 'Dengue', 37: 'Typhoid', 40: 'hepatitis A',
+    19: 'Hepatitis B', 20: 'Hepatitis C', 21: 'Hepatitis D', 22: 'Hepatitis E',
+    0: '(vertigo) Paroymsal Positional Vertigo', 2: 'Acne', 38: 'Urinary tract infection', 35: 'Psoriasis',
+    27: 'Impetigo', 5: 'Arthritis', 31: 'Osteoarthristis', 25: 'Hypoglycemia'
+}
+
+def normalize_symptom_string(s):
+    """Normalize input string to lowercase, remove punctuation, replace spaces/dashes with underscores."""
+    return s.strip().lower().replace('-', '_').replace(' ', '_')
+
+# Build comprehensive lookup dictionary for symptom matching
+symptom_canonical_map = {}
+for feat in feature_names:
+    norm = normalize_symptom_string(feat)
+    symptom_canonical_map[norm] = feat
+    symptom_canonical_map[feat.lower().strip()] = feat
+    symptom_canonical_map[feat.replace('_', ' ').lower().strip()] = feat
+
+# Common colloquial synonyms and variations
+symptom_aliases = {
+    'coughing': 'cough',
+    'fever': 'high_fever',
+    'high fever': 'high_fever',
+    'mild fever': 'mild_fever',
+    'sneezing': 'continuous_sneezing',
+    'vomit': 'vomiting',
+    'itchy': 'itching',
+    'itch': 'itching',
+    'rash': 'skin_rash',
+    'rashes': 'skin_rash',
+    'diarrhea': 'diarrhoea',
+    'loose_motions': 'diarrhoea',
+    'loose motions': 'diarrhoea',
+    'running_nose': 'runny_nose',
+    'running nose': 'runny_nose',
+    'tiredness': 'fatigue',
+    'tired': 'fatigue',
+    'exhaustion': 'fatigue',
+    'dizzy': 'dizziness',
+    'nauseous': 'nausea',
+    'nauseated': 'nausea',
+    'cramping': 'cramps',
+    'gas': 'passage_of_gases',
+    'gases': 'passage_of_gases',
+    'belly_ache': 'belly_pain',
+    'belly ache': 'belly_pain',
+    'head_ache': 'headache',
+    'head ache': 'headache',
+    'body_ache': 'muscle_pain',
+    'body ache': 'muscle_pain',
+    'body_pain': 'muscle_pain',
+    'body pain': 'muscle_pain',
+    'breath_problem': 'breathlessness',
+    'shortness_of_breath': 'breathlessness',
+    'shortness of breath': 'breathlessness',
+    'difficulty_breathing': 'breathlessness',
+    'stomach_ache': 'stomach_pain',
+    'stomach ache': 'stomach_pain',
+    'foul_smell_ofurine': 'foul_smell_of urine',
+    'spotting_urination': 'spotting_ urination',
+    'dischromic_patches': 'dischromic _patches'
+}
+
+for alias, target in symptom_aliases.items():
+    norm_alias = normalize_symptom_string(alias)
+    if target in symptom_canonical_map:
+        canonical = symptom_canonical_map[target]
+        symptom_canonical_map[norm_alias] = canonical
+        symptom_canonical_map[alias.lower().strip()] = canonical
+
+# List of clean human-readable symptom names for datalist/autocomplete
+readable_symptoms = sorted(list(set(
+    f.replace('.', '').replace('_', ' ').strip().title() for f in feature_names
+)))
+
+####################### Helper Functions #######################
+
 def helper(dis):
-    desc = description[description['Disease'] == dis]['Description']
-    desc = " ".join([w for w in desc])
+    """Retrieve descriptions, precautions, medications, diet, and workouts safely."""
+    dis_clean = dis.strip().lower()
 
-    pre = precautions[precautions['Disease'] == dis][['Precaution_1', 'Precaution_2', 'Precaution_3', 'Precaution_4']]
-    pre = [col for col in pre.values]
+    # Description
+    desc_rows = description[description['Disease'].str.lower() == dis_clean]['Description']
+    desc = " ".join([str(w) for w in desc_rows.values]) if len(desc_rows) > 0 else "Detailed description currently being updated."
 
-    med = medications[medications['Disease'] == dis]['Medication']
-    med = [med for med in med.values]
+    # Precautions
+    prec_rows = precautions[precautions['Disease'].str.lower() == dis_clean][['Precaution_1', 'Precaution_2', 'Precaution_3', 'Precaution_4']]
+    pre = []
+    if len(prec_rows) > 0:
+        for val in prec_rows.values[0]:
+            if pd.notna(val) and str(val).strip():
+                pre.append(str(val).strip().capitalize())
 
-    die = diets[diets['Disease'] == dis]['Diet']
-    die = [die for die in die.values]
+    # Medications (parse stringified list safely)
+    med_rows = medications[medications['Disease'].str.lower() == dis_clean]['Medication']
+    med = []
+    if len(med_rows) > 0:
+        for item in med_rows.values:
+            try:
+                parsed = ast.literal_eval(str(item))
+                if isinstance(parsed, list):
+                    med.extend([str(x).strip() for x in parsed])
+                else:
+                    med.append(str(item).strip())
+            except Exception:
+                med.append(str(item).strip())
 
-    wrkout = workout[workout['disease'] == dis]['workout']
+    # Diets (parse stringified list safely)
+    diet_rows = diets[diets['Disease'].str.lower() == dis_clean]['Diet']
+    die = []
+    if len(diet_rows) > 0:
+        for item in diet_rows.values:
+            try:
+                parsed = ast.literal_eval(str(item))
+                if isinstance(parsed, list):
+                    die.extend([str(x).strip() for x in parsed])
+                else:
+                    die.append(str(item).strip())
+            except Exception:
+                die.append(str(item).strip())
+
+    # Workouts
+    workout_rows = workout[workout['disease'].str.lower() == dis_clean]['workout']
+    wrkout = [str(w).strip() for w in workout_rows.values if pd.notna(w)]
+
     return desc, pre, med, die, wrkout
 
-
-symptoms_dict = {'itching': 0, 'skin_rash': 1, 'nodal_skin_eruptions': 2, 'continuous_sneezing': 3, 'shivering': 4,
-                 'chills': 5, 'joint_pain': 6, 'stomach_pain': 7, 'acidity': 8, 'ulcers_on_tongue': 9,
-                 'muscle_wasting': 10, 'vomiting': 11, 'burning_micturition': 12, 'spotting_urination': 13,
-                 'fatigue': 14, 'weight_gain': 15, 'anxiety': 16, 'cold_hands_and_feets': 17, 'mood_swings': 18,
-                 'weight_loss': 19, 'restlessness': 20, 'lethargy': 21, 'patches_in_throat': 22,
-                 'irregular_sugar_level': 23, 'cough': 24, 'high_fever': 25, 'sunken_eyes': 26, 'breathlessness': 27,
-                 'sweating': 28, 'dehydration': 29, 'indigestion': 30, 'headache': 31, 'yellowish_skin': 32,
-                 'dark_urine': 33, 'nausea': 34, 'loss_of_appetite': 35, 'pain_behind_the_eyes': 36, 'back_pain': 37,
-                 'constipation': 38, 'abdominal_pain': 39, 'diarrhoea': 40, 'mild_fever': 41, 'yellow_urine': 42,
-                 'yellowing_of_eyes': 43, 'acute_liver_failure': 44, 'fluid_overload': 45, 'swelling_of_stomach': 46,
-                 'swelled_lymph_nodes': 47, 'malaise': 48, 'blurred_and_distorted_vision': 49, 'phlegm': 50,
-                 'throat_irritation': 51, 'redness_of_eyes': 52, 'sinus_pressure': 53, 'runny_nose': 54,
-                 'congestion': 55, 'chest_pain': 56, 'weakness_in_limbs': 57, 'fast_heart_rate': 58,
-                 'pain_during_bowel_movements': 59, 'pain_in_anal_region': 60, 'bloody_stool': 61,
-                 'irritation_in_anus': 62, 'neck_pain': 63, 'dizziness': 64, 'cramps': 65, 'bruising': 66,
-                 'obesity': 67, 'swollen_legs': 68, 'swollen_blood_vessels': 69, 'puffy_face_and_eyes': 70,
-                 'enlarged_thyroid': 71, 'brittle_nails': 72, 'swollen_extremeties': 73, 'excessive_hunger': 74,
-                 'extra_marital_contacts': 75, 'drying_and_tingling_lips': 76, 'slurred_speech': 77, 'knee_pain': 78,
-                 'hip_joint_pain': 79, 'muscle_weakness': 80, 'stiff_neck': 81, 'swelling_joints': 82,
-                 'movement_stiffness': 83, 'spinning_movements': 84, 'loss_of_balance': 85, 'unsteadiness': 86,
-                 'weakness_of_one_body_side': 87, 'loss_of_smell': 88, 'bladder_discomfort': 89,
-                 'foul_smell_ofurine': 90, 'continuous_feel_of_urine': 91, 'passage_of_gases': 92,
-                 'internal_itching': 93, 'toxic_look_(typhos)': 94, 'depression': 95, 'irritability': 96,
-                 'muscle_pain': 97, 'altered_sensorium': 98, 'red_spots_over_body': 99, 'belly_pain': 100,
-                 'abnormal_menstruation': 101, 'dischromic_patches': 102, 'watering_from_eyes': 103,
-                 'increased_appetite': 104, 'polyuria': 105, 'family_history': 106, 'mucoid_sputum': 107,
-                 'rusty_sputum': 108, 'lack_of_concentration': 109, 'visual_disturbances': 110,
-                 'receiving_blood_transfusion': 111, 'receiving_unsterile_injections': 112, 'coma': 113,
-                 'stomach_bleeding': 114, 'distention_of_abdomen': 115, 'history_of_alcohol_consumption': 116,
-                 'fluid_overload': 117, 'blood_in_sputum': 118, 'prominent_veins_on_calf': 119, 'palpitations': 120,
-                 'painful_walking': 121, 'pus_filled_pimples': 122, 'blackheads': 123, 'scurring': 124,
-                 'skin_peeling': 125, 'silver_like_dusting': 126, 'small_dents_in_nails': 127,
-                 'inflammatory_nails': 128, 'blister': 129, 'red_sore_around_nose': 130, 'yellow_crust_ooze': 131,
-                 'prognosis': 132}
-diseases_list = {15: 'Fungal infection', 4: 'Allergy', 16: 'GERD', 9: 'Chronic cholestasis', 14: ' Drug Reaction',
-                 33: 'Peptic ulcer disease', 1: 'AIDS', 12: 'Diabetes', 17: 'Gastroenteritis', 6: 'Bronchial Asthma',
-                 23: 'Hypertension', 30: 'Migraine', 7: 'Cervical spondylosis', 32: 'Paralysis (brain hemorrhage)',
-                 28: 'Jaundice', 29: 'Malaria', 8: 'Chicken pox', 11: 'Dengue', 37: 'Typhoid', 40: 'hepatitis A',
-                 19: 'Hepatitis B', 20: 'Hepatitis C', 21: 'Hepatitis D', 22: 'Hepatitis E',
-                 0: '(vertigo) Paroymsal Positional Vertigo', 2: 'Acne', 38: 'Urinary tract infection', 35: 'Psoriasis',
-                 27: 'Impetigo', 5: 'Arthritis', 31: 'Osteoarthristis', 25: 'Hypoglycemia'}
-
-
 def get_predicted_value(patient_symptoms):
-    input_vector = np.zeros(len(symptoms_dict))
+    """Predict disease using a DataFrame with exact feature names."""
+    input_df = pd.DataFrame(np.zeros((1, len(feature_names))), columns=feature_names)
+    
+    for symptom in patient_symptoms:
+        if symptom in input_df.columns:
+            input_df.loc[0, symptom] = 1
+        # Also ensure duplicate column fluid_overload.1 is populated if fluid_overload is present
+        if symptom == 'fluid_overload' and 'fluid_overload.1' in input_df.columns:
+            input_df.loc[0, 'fluid_overload.1'] = 1
 
-    for item in patient_symptoms:
-        input_vector[symptoms_dict[item]] = 1
-    return diseases_list[svc.predict([input_vector])[0]]
+    prediction_id = svc.predict(input_df)[0]
+    return diseases_list.get(prediction_id, "Unknown Condition")
 
+####################### Web Routes #######################
 
-
-#creating routes===================
 @app.route('/')
+@app.route('/index')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', readable_symptoms=readable_symptoms)
 
-@app.route('/predict',methods=['POST','GET'])
+@app.route('/predict', methods=['POST', 'GET'])
 def predict():
-    if request.method=='POST':
-        symptoms = request.form.get('symptoms')
-        user_symptoms = [s.strip() for s in symptoms.split(',')]
-        #remove any extra characters,if any
-        user_symptoms = [symptom.strip("[]' ") for symptom in user_symptoms]
-        predicted_disease = get_predicted_value(user_symptoms)
+    if request.method == 'GET':
+        return redirect(url_for('index'))
 
-        desc, pre, med, die, wrkout = helper(predicted_disease)
+    symptoms_raw = request.form.get('symptoms', '').strip()
+    if not symptoms_raw:
+        return render_template('index.html', 
+                               readable_symptoms=readable_symptoms,
+                               error="Please enter at least one symptom.")
 
-        my_pre = []
-        for i in pre[0]:
-            my_pre.append(i)
+    # Split by comma or newline
+    raw_tokens = [s.strip() for s in symptoms_raw.replace('\n', ',').split(',') if s.strip()]
+    
+    matched_features = []
+    unmatched_tokens = []
 
-        return render_template('index.html',predicted_disease=predicted_disease,dis_des=desc,dis_pre=my_pre,dis_med=med,dis_wrkout=wrkout,dis_diet=die)
+    for token in raw_tokens:
+        clean_token = token.strip("[]'\" ")
+        norm_token = normalize_symptom_string(clean_token)
+        
+        if norm_token in symptom_canonical_map:
+            matched_features.append(symptom_canonical_map[norm_token])
+        elif clean_token.lower() in symptom_canonical_map:
+            matched_features.append(symptom_canonical_map[clean_token.lower()])
+        else:
+            unmatched_tokens.append(clean_token)
 
+    if not matched_features:
+        return render_template('index.html',
+                               readable_symptoms=readable_symptoms,
+                               entered_symptoms=symptoms_raw,
+                               error=f"Could not match any symptoms from: '{', '.join(unmatched_tokens)}'. Please select from the suggested symptoms.")
+
+    # Predict condition
+    predicted_disease = get_predicted_value(matched_features)
+    desc, pre, med, die, wrkout = helper(predicted_disease)
+
+    # Human-readable recognized symptoms
+    display_matched = [f.replace('.', '').replace('_', ' ').strip().title() for f in matched_features]
+
+    return render_template('index.html',
+                           readable_symptoms=readable_symptoms,
+                           entered_symptoms=symptoms_raw,
+                           recognized_symptoms=display_matched,
+                           unrecognized_symptoms=unmatched_tokens,
+                           predicted_disease=predicted_disease,
+                           dis_des=desc,
+                           dis_pre=pre,
+                           dis_med=med,
+                           dis_wrkout=wrkout,
+                           dis_diet=die)
 
 @app.route('/about')
 def about():
     return render_template('about.html')
 
 @app.route('/contact')
+@app.route('/Contact')
 def contact():
     return render_template('contact.html')
 
 @app.route('/blog')
+@app.route('/Blog')
 def blog():
     return render_template('blog.html')
 
 @app.route('/developer')
+@app.route('/Developer')
 def developer():
     return render_template('developer.html')
 
+@app.route('/api/symptoms')
+def api_symptoms():
+    """API endpoint returning available symptoms for autocomplete."""
+    return jsonify(readable_symptoms)
 
-
-
-
-
-#pythom main
-if __name__=="__main__":
-    app.run(debug=True)
+if __name__ == "__main__":
+    app.run(debug=False, host="0.0.0.0", port=5000)

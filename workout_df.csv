@@ -1,4 +1,4 @@
-,Unnamed: 0,disease,workout
+Unnamed: 0.1,Unnamed: 0,disease,workout
 0,0,Fungal infection,Avoid sugary foods
 1,1,Fungal infection,Consume probiotics
 2,2,Fungal infection,Increase intake of garlic
@@ -359,16 +359,16 @@
 357,357,Arthritis,Follow medical recommendations
 358,358,Arthritis,Engage in low-impact exercise
 359,359,Arthritis,Maintain a healthy weight
-360,360,(vertigo) Paroymsal  Positional Vertigo,"Avoid trigger foods (caffeine, alcohol)"
-361,361,(vertigo) Paroymsal  Positional Vertigo,Limit sodium intake
-362,362,(vertigo) Paroymsal  Positional Vertigo,Stay hydrated
-363,363,(vertigo) Paroymsal  Positional Vertigo,Consume ginger and ginkgo biloba
-364,364,(vertigo) Paroymsal  Positional Vertigo,Limit artificial sweeteners
-365,365,(vertigo) Paroymsal  Positional Vertigo,Consult a healthcare professional
-366,366,(vertigo) Paroymsal  Positional Vertigo,Avoid sudden head movements
-367,367,(vertigo) Paroymsal  Positional Vertigo,Follow medical recommendations
-368,368,(vertigo) Paroymsal  Positional Vertigo,Manage stress
-369,369,(vertigo) Paroymsal  Positional Vertigo,Limit caffeine and stimulants
+360,360,(vertigo) Paroymsal Positional Vertigo,"Avoid trigger foods (caffeine, alcohol)"
+361,361,(vertigo) Paroymsal Positional Vertigo,Limit sodium intake
+362,362,(vertigo) Paroymsal Positional Vertigo,Stay hydrated
+363,363,(vertigo) Paroymsal Positional Vertigo,Consume ginger and ginkgo biloba
+364,364,(vertigo) Paroymsal Positional Vertigo,Limit artificial sweeteners
+365,365,(vertigo) Paroymsal Positional Vertigo,Consult a healthcare professional
+366,366,(vertigo) Paroymsal Positional Vertigo,Avoid sudden head movements
+367,367,(vertigo) Paroymsal Positional Vertigo,Follow medical recommendations
+368,368,(vertigo) Paroymsal Positional Vertigo,Manage stress
+369,369,(vertigo) Paroymsal Positional Vertigo,Limit caffeine and stimulants
 370,370,Acne,Consume a balanced diet
 371,371,Acne,Limit dairy and high-glycemic foods
 372,372,Acne,Include antioxidants
