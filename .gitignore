@@ -32,7 +32,6 @@ venv.bak/
 
 # IDE
 .idea/
-.vscode/
 *.swp
 *.swo
 
@@ -42,3 +41,9 @@ venv.bak/
 # OS
 .DS_Store
 Thumbs.db
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
+config.bat
+node_modules
