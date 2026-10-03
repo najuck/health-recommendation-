@@ -277,6 +277,7 @@ def handle_404(e):
         "request_url": request.url,
         "path_info": request.environ.get('PATH_INFO'),
         "script_name": request.environ.get('SCRIPT_NAME'),
+        "headers": dict(request.headers),
         "available_routes": [str(rule) for rule in app.url_map.iter_rules()]
     }), 404
 
