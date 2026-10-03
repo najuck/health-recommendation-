@@ -6,3 +6,16 @@ __pycache__
 *.log
 openenv_project
 ai training.txt
+Training.csv.csv
+symtoms_df.csv
+datasets/
+*.ipynb
+run.bat
+Procfile
+static/najuck_job-scheduler-env_files/
+static/*.download
+static/saved_resource*
+static/challenge*
+static/th(*
+static/_*
+

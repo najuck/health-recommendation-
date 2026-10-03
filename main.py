@@ -1,9 +1,12 @@
 import os
 import ast
+import warnings
 import numpy as np
 import pandas as pd
 import pickle
 from flask import Flask, request, render_template, redirect, url_for, jsonify
+
+warnings.filterwarnings("ignore")
 
 # Setup base directory for robust path resolution
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
