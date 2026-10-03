@@ -268,5 +268,17 @@ def api_symptoms():
     """API endpoint returning available symptoms for autocomplete."""
     return jsonify(readable_symptoms)
 
+@app.errorhandler(404)
+def handle_404(e):
+    return jsonify({
+        "status": 404,
+        "message": "Route not matched in Flask",
+        "request_path": request.path,
+        "request_url": request.url,
+        "path_info": request.environ.get('PATH_INFO'),
+        "script_name": request.environ.get('SCRIPT_NAME'),
+        "available_routes": [str(rule) for rule in app.url_map.iter_rules()]
+    }), 404
+
 if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=5000)
